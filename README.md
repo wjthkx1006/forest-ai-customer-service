@@ -6,6 +6,12 @@
 
 后续可部署到云服务器（如streamlit cloud,腾讯云或阿里云等），实现24小时不间断服务。
 
+云端部署示例图片（切记换成自己的key，不然无法回答）
+
+<img width="2559" height="1523" alt="029328f2720bfe6bde3110bce11e4592" src="https://github.com/user-attachments/assets/e43e0e52-d335-49c0-b314-c57e3ac6ddf9" />
+
+![bd3d07d35f3ee2812621352d97cdabe9](https://github.com/user-attachments/assets/9f5f57b8-fbfb-46f9-8bc9-9fa687c239e3)
+
 ### 第1步：获取API密钥
 
 1. 访问[阿里云DashScope控制台](https://dashscope.console.aliyun.com/)
