@@ -12,6 +12,11 @@
 
 ![bd3d07d35f3ee2812621352d97cdabe9](https://github.com/user-attachments/assets/9f5f57b8-fbfb-46f9-8bc9-9fa687c239e3)
 
+
+还有部署时一定要在app settings的secrets界面输入自己的key
+<img width="1125" height="559" alt="streamlit" src="https://github.com/user-attachments/assets/c24b964e-f2ed-4b92-b8a1-7f32e3caf99d" />
+
+
 ### 第1步：获取API密钥
 
 1. 访问[阿里云DashScope控制台](https://dashscope.console.aliyun.com/)
