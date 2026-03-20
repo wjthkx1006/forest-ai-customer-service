@@ -5,6 +5,7 @@
 import os
 import time
 import hashlib
+import json
 import streamlit as st
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -16,14 +17,16 @@ load_dotenv()
 
 # 导入工具模块
 from utils.logger import logger
-from utils.chat_utils import contains_sensitive_content, process_sensitive_content, process_special_questions, generate_unrelated_response
+from utils.chat_utils import contains_sensitive_content, process_sensitive_content, process_special_questions, \
+    generate_unrelated_response
 from utils.prompts import build_prompt_with_context, build_prompt_no_context, build_fallback_prompt
 from utils.ai_service import get_ai_service
 from utils.context_processor import get_context_processor
 
 # 配置
-# 优先从 Streamlit Secrets 读取，兼容本地 .env（方便部署）
-DASHSCOPE_API_KEY = st.secrets.get("DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+# 从环境变量中读取配置 .env（方便部署）
+
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 WECHAT_ID = os.getenv("WECHAT_ID", "123456789")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER", "123456789")
@@ -40,15 +43,15 @@ SUGGESTED_QUESTIONS = [
     "屏幕发黄正常吗？"
 ]
 
-
 # ---------- 初始化向量数据库（优化版） ----------
 _vector_db_instance = None
+
 
 @st.cache_resource
 def get_vector_db():
     """获取向量数据库实例（单例模式）"""
     global _vector_db_instance
-    
+
     if _vector_db_instance is None:
         logger.info("初始化向量数据库...")
         try:
@@ -58,11 +61,46 @@ def get_vector_db():
                 embedding_function=embeddings
             )
             logger.info("向量数据库初始化成功")
+            
+            # 检查数据库是否为空，如果为空则自动构建知识库
+            try:
+                # 尝试检索，如果数据库为空会抛出异常或返回空结果
+                test_docs = _vector_db_instance.similarity_search("测试", k=1)
+                if not test_docs:
+                    logger.info("向量数据库为空，开始自动构建知识库...")
+                    build_knowledge_base(_vector_db_instance, embeddings)
+            except Exception as e:
+                logger.warning(f"检查向量数据库时出错，尝试构建知识库: {e}")
+                build_knowledge_base(_vector_db_instance, embeddings)
+                
         except Exception as e:
             logger.error(f"向量数据库初始化失败: {e}")
             _vector_db_instance = None
-    
+
     return _vector_db_instance
+
+
+def build_knowledge_base(vector_db, embeddings):
+    """自动构建知识库"""
+    try:
+        # 读取FAQ数据
+        faq_path = "faq.json"
+        if not os.path.exists(faq_path):
+            logger.warning(f"FAQ文件不存在: {faq_path}")
+            return
+        
+        with open(faq_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 将问答对拼接成文本块
+        texts = [f"问题：{item['question']}\n答案：{item['answer']}" for item in data]
+        
+        # 添加到向量数据库
+        vector_db.add_texts(texts)
+        logger.info(f"知识库自动构建完成！共导入 {len(texts)} 条知识")
+        
+    except Exception as e:
+        logger.error(f"自动构建知识库失败: {e}")
 
 
 # ---------- 快速知识库检索 ----------
@@ -70,7 +108,7 @@ def fast_knowledge_retrieval(query: str, vector_db) -> str:
     """快速知识库检索"""
     if not vector_db:
         return ""
-    
+
     try:
         # 使用更快的检索参数
         docs = vector_db.similarity_search(query, k=3)  # 减少检索数量
@@ -81,7 +119,7 @@ def fast_knowledge_retrieval(query: str, vector_db) -> str:
             return knowledge
     except Exception as e:
         logger.error(f"快速知识库检索失败: {e}")
-    
+
     return ""
 
 
@@ -121,10 +159,10 @@ def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
     # 4. 快速上下文分析（简化版）
     context_processor = get_context_processor()
     context_analysis = context_processor.analyze_conversation_context(messages, query)
-    
+
     # 5. 快速判断是否无关问题
     is_unrelated = is_unrelated_question_fast(query)
-    
+
     # 如果是无关问题，使用快速响应
     if is_unrelated:
         response = generate_unrelated_response(query, context_analysis)
@@ -134,18 +172,18 @@ def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
 
     # 6. 并行处理：同时进行知识库检索和AI服务准备
     vector_db = get_vector_db()
-    ai_service = get_ai_service()
-    
+    ai_service = get_ai_service(api_key=DASHSCOPE_API_KEY)
+
     # 快速知识库检索
     knowledge = fast_knowledge_retrieval(query, vector_db)
-    
+
     # 7. 快速回答生成
     if ai_service and hasattr(ai_service, 'client'):
         try:
             if knowledge:
-    # 使用简化提示
+                # 使用简化提示
                 prompt = build_prompt_no_context(query, knowledge)
-                response = ai_service.generate_answer(prompt, max_tokens=500)
+                response = ai_service.generate_answer(prompt, max_tokens=500)  # 减少token数
             else:
                 # 无知识库内容，使用AI服务直接回答
                 prompt = f"请回答以下问题：{query}"
@@ -159,11 +197,11 @@ def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
 
     # 8. 构建结果
     result = build_result_fast(response, False, False, start_time)
-    
+
     # 9. 快速缓存结果
     if "抱歉" not in response and "无法回答" not in response:
         cache_result_fast(cache_key, result)
-    
+
     logger.info(f"快速回答生成完成，耗时: {result['response_time']:.2f}秒")
     return result
 
@@ -179,10 +217,10 @@ def generate_cache_key_fast(query: str, messages: List[Dict]) -> str:
             if msg.get("role") == "user":
                 last_user_msg = msg.get("content", "")[:30]  # 只取前30字符
                 break
-        
+
         if last_user_msg:
             recent_context = last_user_msg
-    
+
     # 创建简化哈希键
     key_string = f"{query[:50]}_{recent_context}"  # 限制长度
     return f"fast_cache_{hashlib.md5(key_string.encode()).hexdigest()[:12]}"
@@ -191,14 +229,14 @@ def generate_cache_key_fast(query: str, messages: List[Dict]) -> str:
 def is_unrelated_question_fast(query: str) -> bool:
     """快速判断是否无关问题"""
     query_lower = query.lower()
-    
+
     # 快速关键词匹配
     unrelated_keywords = [
         "天气", "美食", "餐厅", "电影", "电视剧", "娱乐", "明星",
         "体育", "运动", "比赛", "健身", "新闻", "时事", "热点",
         "你好", "嗨", "hello", "hi", "谢谢", "感谢"
     ]
-    
+
     return any(keyword in query_lower for keyword in unrelated_keywords)
 
 
@@ -296,15 +334,15 @@ def main_optimized():
     st.markdown("---")
     st.markdown("示例问题")
     st.markdown("点击以下问题快速开始：")
-    
+
     # 创建两列布局显示示例问题
     cols = st.columns(2)
-    
+
     # 初始化示例问题点击状态
     if "example_clicked" not in st.session_state:
         st.session_state.example_clicked = False
         st.session_state.clicked_question = None
-    
+
     # 检查是否有示例问题被点击
     for i, question in enumerate(SUGGESTED_QUESTIONS):
         col_idx = i % 2
@@ -314,32 +352,32 @@ def main_optimized():
                 st.session_state.example_clicked = True
                 st.session_state.clicked_question = question
                 st.rerun()
-    
+
     st.markdown("---")
 
     # 聊天历史
     st.markdown("<div class='chat-history'>", unsafe_allow_html=True)
-    
+
     # 显示所有历史消息
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-    
+
     # 处理示例问题点击
     if st.session_state.example_clicked and st.session_state.clicked_question:
         clicked_question = st.session_state.clicked_question
-        
+
         # 添加用户消息
         with st.chat_message("user"):
             st.markdown(clicked_question)
         st.session_state.messages.append({"role": "user", "content": clicked_question})
-        
+
         # 生成回答
         with st.chat_message("assistant"):
             with st.spinner("正在快速思考..."):
                 result = smart_answer_fast(clicked_question, st.session_state.messages)
                 st.markdown(result["response"])
-                
+
                 # 显示转人工按钮
                 if result.get("show_human") or result.get("is_sensitive"):
                     st.markdown("---")
@@ -349,14 +387,14 @@ def main_optimized():
                         st.link_button("加微信咨询", f"weixin://dl/chat?{WECHAT_ID}", use_container_width=True)
                     with col2:
                         st.link_button("拨打电话", f"tel:{PHONE_NUMBER}", use_container_width=True)
-        
+
         # 添加助手消息到历史
         st.session_state.messages.append({"role": "assistant", "content": result["response"]})
-        
+
         # 重置点击状态
         st.session_state.example_clicked = False
         st.session_state.clicked_question = None
-    
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     # 处理聊天输入框输入
@@ -366,13 +404,13 @@ def main_optimized():
         with st.chat_message("user"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
-        
+
         # 生成回答
         with st.chat_message("assistant"):
             with st.spinner("正在快速思考..."):
                 result = smart_answer_fast(prompt, st.session_state.messages)
                 st.markdown(result["response"])
-                
+
                 # 显示转人工按钮
                 if result.get("show_human") or result.get("is_sensitive"):
                     st.markdown("---")
@@ -382,7 +420,7 @@ def main_optimized():
                         st.link_button("加微信咨询", f"weixin://dl/chat?{WECHAT_ID}", use_container_width=True)
                     with col2:
                         st.link_button("拨打电话", f"tel:{PHONE_NUMBER}", use_container_width=True)
-        
+
         # 添加助手消息到历史
         st.session_state.messages.append({"role": "assistant", "content": result["response"]})
 
