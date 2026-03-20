@@ -105,16 +105,16 @@ def build_knowledge_base(vector_db, embeddings):
 
 # ---------- 快速知识库检索 ----------
 def fast_knowledge_retrieval(query: str, vector_db) -> str:
-    """快速知识库检索"""
+    """快速知识库检索（优化版）"""
     if not vector_db:
         return ""
 
     try:
-        # 使用更快的检索参数
-        docs = vector_db.similarity_search(query, k=3)  # 减少检索数量
+        # 优化检索参数，减少检索数量
+        docs = vector_db.similarity_search(query, k=2)  # 减少到2个文档
         if docs:
-            # 只取前2个文档，减少处理时间
-            knowledge = "\n".join([doc.page_content for doc in docs[:2]])
+            # 只取第1个文档，进一步减少处理时间
+            knowledge = docs[0].page_content
             logger.info(f"快速检索到 {len(docs)} 个相关文档")
             return knowledge
     except Exception as e:
@@ -207,23 +207,10 @@ def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
 
 
 def generate_cache_key_fast(query: str, messages: List[Dict]) -> str:
-    """生成快速缓存键"""
-    # 简化缓存键生成
-    recent_context = ""
-    if len(messages) > 0:
-        # 只取最后一条用户消息
-        last_user_msg = None
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                last_user_msg = msg.get("content", "")[:30]  # 只取前30字符
-                break
-
-        if last_user_msg:
-            recent_context = last_user_msg
-
-    # 创建简化哈希键
-    key_string = f"{query[:50]}_{recent_context}"  # 限制长度
-    return f"fast_cache_{hashlib.md5(key_string.encode()).hexdigest()[:12]}"
+    """生成快速缓存键（优化版）"""
+    # 只使用当前问题生成缓存键，提高缓存命中率
+    query_normalized = query.strip().lower()
+    return f"fast_cache_{hashlib.md5(query_normalized.encode()).hexdigest()[:12]}"
 
 
 def is_unrelated_question_fast(query: str) -> bool:
