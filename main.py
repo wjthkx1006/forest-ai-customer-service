@@ -144,12 +144,12 @@ def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
         try:
             if knowledge:
     # 使用简化提示
-    prompt = build_prompt_no_context(query, knowledge)
-    response = ai_service.generate_answer(prompt, max_tokens=500)
-    else:
-    # 无知识库内容，使用AI服务直接回答
-    prompt = f"请回答以下问题：{query}"
-    response = ai_service.generate_answer(prompt, max_tokens=500)
+                prompt = build_prompt_no_context(query, knowledge)
+                response = ai_service.generate_answer(prompt, max_tokens=500)
+            else:
+                # 无知识库内容，使用AI服务直接回答
+                prompt = f"请回答以下问题：{query}"
+                response = ai_service.generate_answer(prompt, max_tokens=500)
         except Exception as e:
             logger.error(f"AI快速回答生成失败: {e}")
             response = generate_fallback_answer_fast(query)
