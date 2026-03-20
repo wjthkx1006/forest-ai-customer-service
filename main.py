@@ -26,7 +26,7 @@ from utils.context_processor import get_context_processor
 # 配置
 # 从环境变量中读取配置 .env（方便部署）
 
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+DASHSCOPE_API_KEY = st.secrets.get("DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 WECHAT_ID = os.getenv("WECHAT_ID", "123456789")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER", "123456789")
