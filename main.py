@@ -22,7 +22,8 @@ from utils.ai_service import get_ai_service
 from utils.context_processor import get_context_processor
 
 # 配置
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+# 优先从 Streamlit Secrets 读取，兼容本地 .env（方便部署）
+DASHSCAPE_API_KEY = st.secrets.get("DASHSCAPE_API_KEY") or os.getenv("DASHSCAPE_API_KEY")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 WECHAT_ID = os.getenv("WECHAT_ID", "123456789")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER", "123456789")
