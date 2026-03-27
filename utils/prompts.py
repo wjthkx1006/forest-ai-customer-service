@@ -4,7 +4,6 @@ AI提示模板 - 优化版
 
 from typing import List, Dict
 
-
 def build_prompt_with_context(query: str, context: str, knowledge: str, conversation_history: List[Dict] = None) -> str:
     """构建带上下文的Prompt（优化版）"""
     
