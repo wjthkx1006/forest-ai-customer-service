@@ -3,12 +3,9 @@
 """
 import json
 from typing import List
-
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_community.vectorstores import Chroma
-
 from config import DASHSCOPE_API_KEY
-
 
 def build_vector_db():
     """构建向量数据库"""
