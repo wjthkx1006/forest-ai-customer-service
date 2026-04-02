@@ -85,21 +85,71 @@ class ContextProcessor:
         }
     
     def _find_referenced_topic(self, current_query: str, messages: List[Dict]) -> Optional[str]:
-        """查找被引用的主题"""
+        """查找被引用的主题（增强版）"""
         query_lower = current_query.lower()
         
         # 检查是否包含指代词
         for pronoun in self.reference_keywords:
             if pronoun in query_lower:
-                # 在最近的助理回答中寻找可能被引用的主题
+                # 提取当前查询中的关键词，帮助确定指代对象
+                current_keywords = self._extract_topic_keywords(current_query)
+                
+                # 在最近的对话中寻找可能被引用的主题
+                referenced_entities = []
+                
+                # 从最近的用户问题开始查找
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        content = msg.get("content", "")
+                        # 提取用户问题中的主题
+                        topic = self._extract_main_topic(content)
+                        if topic:
+                            referenced_entities.append({
+                                "topic": topic,
+                                "content": content,
+                                "role": "user"
+                            })
+                
+                # 从最近的助理回答中查找
                 for msg in reversed(messages):
                     if msg.get("role") == "assistant":
                         content = msg.get("content", "")
-                        # 提取助理回答中的主要主题
+                        # 提取助理回答中的主题
                         topic = self._extract_main_topic(content)
                         if topic:
-                            return topic
-                break
+                            referenced_entities.append({
+                                "topic": topic,
+                                "content": content,
+                                "role": "assistant"
+                            })
+                
+                # 如果没有找到任何实体，返回None
+                if not referenced_entities:
+                    return None
+                
+                # 如果当前查询中有关键词，尝试匹配最相关的实体
+                if current_keywords:
+                    best_match = None
+                    best_score = 0
+                    
+                    for entity in referenced_entities:
+                        entity_keywords = self._extract_topic_keywords(entity["content"])
+                        # 计算关键词匹配度
+                        match_score = len(set(current_keywords) & set(entity_keywords))
+                        
+                        # 优先匹配用户最近提到的实体
+                        if entity["role"] == "user":
+                            match_score += 1
+                        
+                        if match_score > best_score:
+                            best_score = match_score
+                            best_match = entity["topic"]
+                    
+                    if best_match:
+                        return best_match
+                
+                # 如果没有关键词匹配，返回最近提到的实体
+                return referenced_entities[0]["topic"] if referenced_entities else None
         
         return None
     
@@ -288,9 +338,11 @@ class ContextProcessor:
         return False
     
     def build_context_aware_prompt(self, query: str, context_analysis: Dict, knowledge: str) -> str:
-        """构建上下文感知的提示"""
+        """构建上下文感知的提示（增强版）"""
         
         context_info = ""
+        reference_info = ""
+        
         if context_analysis["has_context"]:
             context_info = f"""
 【对话上下文分析】
@@ -298,7 +350,14 @@ class ContextProcessor:
 - 当前查询类型：{context_analysis['query_analysis']['query_type']}
 """
             
+            # 增强的指代词处理
             if context_analysis["referenced_topic"]:
+                reference_info = f"""
+【指代词解析】
+- 用户使用了指代词："它"、"这个"、"那个"等
+- 指代对象：{context_analysis['referenced_topic']}
+- 处理建议：在回答时请明确指代的具体内容，例如："关于二手iPhone的电池健康度..."
+"""
                 context_info += f"- 引用的主题：{context_analysis['referenced_topic']}\n"
             
             if context_analysis["topic_continuation"]:
@@ -312,6 +371,8 @@ class ContextProcessor:
 你是专业的二手手机客服助手，正在进行智能对话。
 
 {context_info if context_info else "【对话上下文】\n这是对话的开始，没有历史上下文。\n"}
+
+{reference_info if reference_info else ""}
 
 # 相关知识
 {knowledge if knowledge else "知识库中没有找到与当前对话直接相关的内容。"}
@@ -328,7 +389,7 @@ class ContextProcessor:
 # 回答策略
 1. **直接回答**：不要添加自我介绍或刻意的开场白，直接回答问题
 2. **自然衔接**：如果当前问题是之前话题的延续，请自然衔接
-3. **指代明确**：如果用户使用了指代词，请在回答中明确所指内容
+3. **指代明确**：如果用户使用了指代词，请在回答中明确所指内容，例如："关于您刚才提到的二手iPhone..."
 4. **简洁专业**：回答要简洁明了，专业准确
 5. **自然表达**：使用自然的口语化表达，不要显得刻意
 6. **价值提供**：即使问题不完全相关，也要尝试提供有价值的信息
