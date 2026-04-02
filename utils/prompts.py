@@ -1,34 +1,17 @@
 """
 AI提示模板 - 优化版
 """
-
 from typing import List, Dict
 
-def build_prompt_with_context(query: str, context: str, knowledge: str, conversation_history: List[Dict] = None) -> str:
-    """构建带上下文的Prompt（优化版）"""
-    
-    # 构建更丰富的上下文信息
-    context_info = ""
-    if context:
-        context_info = f"【对话历史】\n{context}\n"
-    elif conversation_history and len(conversation_history) > 1:
-        # 从对话历史中提取上下文
-        recent_messages = conversation_history[-6:]  # 最多6条消息
-        context_lines = []
-        for msg in recent_messages:
-            role = "用户" if msg.get("role") == "user" else "客服"
-            content = msg.get("content", "")[:150]  # 限制长度
-            if content:
-                context_lines.append(f"{role}: {content}")
-        if context_lines:
-            context_info = f"【最近对话】\n" + "\n".join(context_lines) + "\n"
-    
+
+def build_prompt_with_context(query: str, context: str, knowledge: str) -> str:
+    """构建带上下文的Prompt"""
     return f"""
 # 角色设定
 你是专业的二手手机客服助手。
 
 # 上下文信息
-{context_info if context_info else "这是第一次对话，没有历史记录。"}
+{context if context else "这是第一次对话，没有历史记录。"}
 
 # 相关知识
 {knowledge if knowledge else "知识库中没有找到与问题直接相关的内容。"}
@@ -79,72 +62,3 @@ def build_prompt_no_context(query: str, knowledge: str) -> str:
 
 请开始回答：
 """
-
-
-def build_fallback_prompt(query: str) -> str:
-    """构建降级提示（当知识库为空时使用）"""
-    return f"""
-# 角色设定
-你是专业的二手手机客服助手。
-
-# 用户问题
-{query}
-
-# 当前情况
-知识库中没有找到与这个问题直接相关的内容。
-
-# 回答要求
-请直接、礼貌地告知用户无法回答该问题，并：
-1. 不要添加自我介绍或刻意的开场白
-2. 说明你专注于二手手机相关问题
-3. 建议用户提供更多信息或换种方式提问
-4. 保持友好专业的语气，但不要显得刻意
-
-请开始回答：
-"""
-
-
-def build_multi_turn_prompt(query: str, conversation_history: List[Dict], knowledge: str) -> str:
-    """构建多轮对话提示（高级版）"""
-    
-    # 构建完整的对话历史
-    history_text = ""
-    if conversation_history and len(conversation_history) > 1:
-        history_lines = []
-        for i, msg in enumerate(conversation_history[-10:], 1):  # 最多10条历史
-            role = "用户" if msg.get("role") == "user" else "客服"
-            content = msg.get("content", "")[:100]  # 限制长度
-            history_lines.append(f"{i}. {role}: {content}")
-        
-        if history_lines:
-            history_text = "【完整对话历史】\n" + "\n".join(history_lines) + "\n"
-    
-    return f"""
-# 角色设定
-你是专业的二手手机客服助手，正在进行多轮对话。
-
-{history_text if history_text else "【对话历史】\n这是对话的开始。\n"}
-
-# 相关知识
-{knowledge if knowledge else "知识库中没有找到与当前对话相关的内容。"}
-
-# 用户最新问题
-{query}
-
-# 对话分析要求
-1. **理解对话脉络**：分析当前问题与之前对话的关系
-2. **识别指代关系**：注意"它"、"这个"、"那个"、"上面说的"等指代词
-3. **跟踪问题演变**：如果用户的问题是基于之前讨论的延伸，请保持一致性
-4. **管理对话状态**：如果话题转换，请自然过渡
-
-# 回答要求
-1. **直接回答**：不要添加自我介绍或刻意的开场白，直接回答问题
-2. **连贯性**：回答要与之前的对话保持连贯
-3. **上下文感知**：显式或隐式地引用相关上下文
-4. **自然表达**：使用自然的口语化表达，不要显得刻意
-5. **渐进深入**：如果用户在深入询问，提供更详细的解释
-6. **总结归纳**：如果对话较长，可以适当总结关键点
-
-请开始回答：
-"""
-
