@@ -19,14 +19,14 @@ load_dotenv()
 from utils.logger import logger
 from utils.chat_utils import contains_sensitive_content, process_sensitive_content, process_special_questions, \
     generate_unrelated_response
-from utils.prompts import build_prompt_with_context, build_prompt_no_context, build_fallback_prompt
+from utils.prompts import build_prompt_with_context, build_prompt_no_context
 from utils.ai_service import get_ai_service
 from utils.context_processor import get_context_processor
 
 # 配置
 # 从环境变量中读取配置 .env（方便部署）
-#本地最好就用后面的....................
-DASHSCOPE_API_KEY = st.secrets.get("DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 WECHAT_ID = os.getenv("WECHAT_ID", "123456789")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER", "123456789")
@@ -43,7 +43,7 @@ SUGGESTED_QUESTIONS = [
     "屏幕发黄正常吗？"
 ]
 
-# ---------- 初始化向量数据库（优化版） ----------
+# ---------- 初始化向量数据库 ----------
 _vector_db_instance = None
 
 
@@ -123,10 +123,9 @@ def fast_knowledge_retrieval(query: str, vector_db) -> str:
     return ""
 
 
-# ---------- 智能回答函数（极速优化版） ----------
+# ---------- 智能回答函数 ----------
 @st.cache_data(ttl=3600)
 def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
-    """极速优化版智能回答，专注于响应速度"""
     start_time = time.time()
     logger.info(f"处理用户问题（快速）: {query}")
 
@@ -181,12 +180,14 @@ def smart_answer_fast(query: str, messages: List[Dict]) -> Dict[str, Any]:
     if ai_service and hasattr(ai_service, 'client'):
         try:
             if knowledge:
-                # 使用简化提示
-                prompt = build_prompt_no_context(query, knowledge)
+                # 从上下文分析中获取上下文信息
+                context_info = context_analysis.get("summary", "")
+                # 使用带上下文的提示
+                prompt = build_prompt_with_context(query, context_info, knowledge)
                 response = ai_service.generate_answer(prompt, max_tokens=500)  # 减少token数
             else:
-                # 无知识库内容，使用AI服务直接回答
-                prompt = f"请回答以下问题：{query}"
+                # 无知识库内容，使用无上下文提示
+                prompt = build_prompt_no_context(query, "")
                 response = ai_service.generate_answer(prompt, max_tokens=500)
         except Exception as e:
             logger.error(f"AI快速回答生成失败: {e}")
@@ -255,7 +256,7 @@ def main_optimized():
     """优化版主应用"""
     st.set_page_config(
         page_title="森林二手手机智能客服",
-        page_icon="📱",
+        page_icon="",
         layout="wide",
         initial_sidebar_state="collapsed"
     )
@@ -314,7 +315,7 @@ def main_optimized():
 
     # 标题
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    st.markdown('<h1 class="title">📱 森林二手手机智能客服</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="title">森林二手手机智能客服</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">专业解答二手手机相关问题，快速响应</p>', unsafe_allow_html=True)
 
     # 显示示例问题（始终显示）
