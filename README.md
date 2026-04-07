@@ -10,7 +10,7 @@
 
 <img width="2559" height="1523" alt="029328f2720bfe6bde3110bce11e4592" src="https://github.com/user-attachments/assets/e43e0e52-d335-49c0-b314-c57e3ac6ddf9" />
 
-![bd3d07d35f3ee2812621352d97cdabe9](https://github.com/user-attachments/assets/9f5f57b8-fbfb-46f9-8bc9-9fa687c239e3)
+
 
 
 还有部署时一定要在app settings的secrets界面输入自己的key
