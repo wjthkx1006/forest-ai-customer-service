@@ -5,7 +5,6 @@
 import os
 import time
 import hashlib
-import json
 import streamlit as st
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -22,6 +21,7 @@ from utils.chat_utils import contains_sensitive_content, process_sensitive_conte
 from utils.prompts import build_prompt_with_context, build_prompt_no_context
 from utils.ai_service import get_ai_service
 from utils.context_processor import get_context_processor
+from utils.doc_loader import load_all_knowledge
 
 # 配置
 # 从环境变量中读取配置 .env（方便部署）
@@ -53,30 +53,26 @@ _vector_db_instance = None
 
 @st.cache_resource
 def get_vector_db():
-    """获取向量数据库实例（单例模式）"""
+    """获取向量数据库实例（单例模式，不存在时自动构建）"""
     global _vector_db_instance
 
     if _vector_db_instance is None:
         logger.info("初始化向量数据库...")
         try:
             embeddings = DashScopeEmbeddings(model="text-embedding-v2", dashscope_api_key=DASHSCOPE_API_KEY)
+
+            db_exists = os.path.isdir(CHROMA_DB_PATH) and len(os.listdir(CHROMA_DB_PATH)) > 0
+
+            if not db_exists:
+                logger.info("向量数据库不存在，自动构建知识库...")
+                build_knowledge_base(None, embeddings)
+
             _vector_db_instance = Chroma(
                 persist_directory=CHROMA_DB_PATH,
                 embedding_function=embeddings
             )
             logger.info("向量数据库初始化成功")
-            
-            # 检查数据库是否为空，如果为空则自动构建知识库
-            try:
-                # 尝试检索，如果数据库为空会抛出异常或返回空结果
-                test_docs = _vector_db_instance.similarity_search("测试", k=1)
-                if not test_docs:
-                    logger.info("向量数据库为空，开始自动构建知识库...")
-                    build_knowledge_base(_vector_db_instance, embeddings)
-            except Exception as e:
-                logger.warning(f"检查向量数据库时出错，尝试构建知识库: {e}")
-                build_knowledge_base(_vector_db_instance, embeddings)
-                
+
         except Exception as e:
             logger.error(f"向量数据库初始化失败: {e}")
             _vector_db_instance = None
@@ -85,45 +81,41 @@ def get_vector_db():
 
 
 def build_knowledge_base(vector_db, embeddings):
-    """自动构建知识库"""
+    """自动构建知识库（FAQ + 文档融合）"""
     global _knowledge_base_cache
     try:
-        # 读取FAQ数据
-        faq_path = "faq.json"
-        if not os.path.exists(faq_path):
-            logger.warning(f"FAQ文件不存在: {faq_path}")
+        faq_texts, doc_chunks = load_all_knowledge()
+        all_texts = faq_texts + doc_chunks
+
+        if not all_texts:
+            logger.warning("没有找到任何知识内容")
             return
-        
-        with open(faq_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # 将问答对拼接成文本块
-        texts = [f"问题：{item['question']}\n答案：{item['answer']}" for item in data]
-        
-        # 添加到向量数据库
-        vector_db.add_texts(texts)
-        _knowledge_base_cache = texts
-        logger.info(f"知识库自动构建完成！共导入 {len(texts)} 条知识")
-        
+
+        if vector_db is None:
+            Chroma.from_texts(
+                texts=all_texts,
+                embedding=embeddings,
+                persist_directory=CHROMA_DB_PATH
+            )
+        else:
+            vector_db.add_texts(all_texts)
+
+        _knowledge_base_cache = all_texts
+        logger.info(f"知识库自动构建完成！共导入 {len(all_texts)} 条（FAQ: {len(faq_texts)}, 文档: {len(doc_chunks)}）")
+
     except Exception as e:
         logger.error(f"自动构建知识库失败: {e}")
 
 
 def load_knowledge_base_cache():
-    """加载知识库文本缓存（用于关键词检索）"""
+    """加载知识库文本缓存（FAQ + 文档，用于关键词检索）"""
     global _knowledge_base_cache
     if _knowledge_base_cache:
         return _knowledge_base_cache
 
     try:
-        faq_path = "faq.json"
-        if not os.path.exists(faq_path):
-            return []
-
-        with open(faq_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        _knowledge_base_cache = [f"问题：{item['question']}\n答案：{item['answer']}" for item in data]
+        faq_texts, doc_chunks = load_all_knowledge()
+        _knowledge_base_cache = faq_texts + doc_chunks
         logger.info(f"知识库文本缓存加载完成，共 {len(_knowledge_base_cache)} 条")
     except Exception as e:
         logger.error(f"加载知识库文本缓存失败: {e}")
@@ -290,6 +282,19 @@ def cache_result_fast(cache_key: str, result: Dict[str, Any]):
     logger.info(f"快速缓存回答，键: {cache_key[:20]}...")
 
 
+def _rebuild_vector_db():
+    """重建向量数据库（清空旧数据并重新导入）"""
+    global _vector_db_instance, _knowledge_base_cache
+
+    import shutil
+    if os.path.isdir(CHROMA_DB_PATH):
+        shutil.rmtree(CHROMA_DB_PATH)
+
+    get_vector_db.clear()
+    _vector_db_instance = None
+    _knowledge_base_cache = None
+
+
 # ---------- 主应用函数 ----------
 def main_optimized():
     """优化版主应用"""
@@ -299,6 +304,13 @@ def main_optimized():
         layout="wide",
         initial_sidebar_state="collapsed"
     )
+
+    with st.sidebar:
+        st.markdown("### 管理")
+        if st.button("重建知识库", use_container_width=True):
+            _rebuild_vector_db()
+            st.success("知识库重建完成！")
+            st.rerun()
 
     # 自定义CSS
     st.markdown("""
