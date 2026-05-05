@@ -1,32 +1,30 @@
 """
-构建向量数据库 - 将FAQ知识库转换为向量存储
+构建向量数据库 - 将FAQ + 文档知识库转换为向量存储
 """
-import json
-from typing import List
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_community.vectorstores import Chroma
+
 from config import DASHSCOPE_API_KEY
+from utils.doc_loader import load_all_knowledge
+
 
 def build_vector_db():
-    """构建向量数据库"""
-    # 读取FAQ
-    with open('faq.json', 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    """构建向量数据库（FAQ + 文档融合）"""
+    faq_texts, doc_chunks = load_all_knowledge()
+    all_texts = faq_texts + doc_chunks
 
-    # 将问答对拼接成文本块
-    texts = [f"问题：{item['question']}\n答案：{item['answer']}" for item in data]
+    if not all_texts:
+        print("没有找到任何知识内容，请检查 faq.json 和 docs/ 目录")
+        return
 
-    # 初始化嵌入模型（与main.py保持一致）
     embeddings = DashScopeEmbeddings(model="text-embedding-v2", dashscope_api_key=DASHSCOPE_API_KEY)
 
-    # 存入Chroma
     vectorstore = Chroma.from_texts(
-        texts=texts,
+        texts=all_texts,
         embedding=embeddings,
         persist_directory="./chroma_db"
     )
-    vectorstore.persist()
-    print(f" 向量库构建完成！共导入 {len(texts)} 条知识")
+    print(f"向量库构建完成！共导入 {len(all_texts)} 条知识（FAQ: {len(faq_texts)}, 文档: {len(doc_chunks)}）")
 
 
 if __name__ == "__main__":
