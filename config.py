@@ -1,5 +1,5 @@
 """
-配置文件 - 集中管理应用参数（优化版）
+配置文件 - 集中管理应用参数
 本地开发：创建.env文件设置环境变量
 部署环境：在Streamlit Cloud Secrets中设置
 """
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ==================== API配置 ====================
-# 必须从环境变量读取，请勿在代码中硬编码
+# 必须从环境变量读取，请勿直接使用
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 
 # ==================== 性能优化配置 ====================
@@ -26,6 +26,7 @@ VECTOR_STORE_PATH = "./chroma_db"
 EMBEDDING_MODEL = "text-embedding-v2"
 MAX_RETRIEVAL_DOCS = 5        # 最大检索文档数
 MIN_SIMILARITY_SCORE = 0.6    # 最小相似度分数
+HYBRID_KEYWORD_WEIGHT = 0.35  # 关键词检索融合权重（0~1）
 
 # ==================== AI模型配置 ====================
 LLM_MODEL = "qwen-turbo"      # 使用的AI模型
@@ -35,7 +36,7 @@ LLM_TIMEOUT = 30              # API调用超时时间（秒）
 
 # ==================== 回答质量配置 ====================
 MIN_ANSWER_QUALITY_SCORE = 50 # 最小回答质量分数
-MAX_ANSWER_LENGTH = 500       # 最大回答长度（字符）
+MAX_ANSWER_LENGTH = 200       # 最大回答长度（字符）
 MIN_ANSWER_LENGTH = 20        # 最小回答长度（字符）
 
 # ==================== 应用配置 ====================
