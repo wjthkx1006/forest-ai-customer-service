@@ -9,3 +9,5 @@ chromadb
 pypdf
 python-dotenv
 rich
+jieba
+rank_bm25
