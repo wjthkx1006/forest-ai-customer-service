@@ -18,7 +18,7 @@ load_dotenv()
 # 导入工具模块
 from utils.logger import logger
 from utils.chat_utils import contains_sensitive_content, process_sensitive_content, process_special_questions, \
-    generate_unrelated_response
+    generate_unrelated_response, hybrid_search
 from utils.prompts import build_prompt_with_context, build_prompt_no_context
 from utils.ai_service import get_ai_service
 from utils.context_processor import get_context_processor
@@ -30,6 +30,10 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 WECHAT_ID = os.getenv("WECHAT_ID", "123456789")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER", "123456789")
+HYBRID_KEYWORD_WEIGHT = float(os.getenv("HYBRID_KEYWORD_WEIGHT", "0.35"))
+
+# 知识库文本缓存（用于关键词检索）
+_knowledge_base_cache: List[str] = []
 
 # 示例问题
 SUGGESTED_QUESTIONS = [
@@ -82,6 +86,7 @@ def get_vector_db():
 
 def build_knowledge_base(vector_db, embeddings):
     """自动构建知识库"""
+    global _knowledge_base_cache
     try:
         # 读取FAQ数据
         faq_path = "faq.json"
@@ -97,25 +102,59 @@ def build_knowledge_base(vector_db, embeddings):
         
         # 添加到向量数据库
         vector_db.add_texts(texts)
+        _knowledge_base_cache = texts
         logger.info(f"知识库自动构建完成！共导入 {len(texts)} 条知识")
         
     except Exception as e:
         logger.error(f"自动构建知识库失败: {e}")
 
 
+def load_knowledge_base_cache():
+    """加载知识库文本缓存（用于关键词检索）"""
+    global _knowledge_base_cache
+    if _knowledge_base_cache:
+        return _knowledge_base_cache
+
+    try:
+        faq_path = "faq.json"
+        if not os.path.exists(faq_path):
+            return []
+
+        with open(faq_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        _knowledge_base_cache = [f"问题：{item['question']}\n答案：{item['answer']}" for item in data]
+        logger.info(f"知识库文本缓存加载完成，共 {len(_knowledge_base_cache)} 条")
+    except Exception as e:
+        logger.error(f"加载知识库文本缓存失败: {e}")
+
+    return _knowledge_base_cache
+
+
 # ---------- 快速知识库检索 ----------
 def fast_knowledge_retrieval(query: str, vector_db) -> str:
-    """快速知识库检索（优化版）"""
+    """快速知识库检索（混合检索版：向量 + 关键词）"""
     if not vector_db:
         return ""
 
     try:
-        # 优化检索参数，减少检索数量
-        docs = vector_db.similarity_search(query, k=2)  # 减少到2个文档
-        if docs:
-            # 只取第1个文档，进一步减少处理时间
-            knowledge = docs[0].page_content
-            logger.info(f"快速检索到 {len(docs)} 个相关文档")
+        knowledge_base = load_knowledge_base_cache()
+        search_results = hybrid_search(
+            query=query,
+            vector_db=vector_db,
+            knowledge_base=knowledge_base,
+            keyword_weight=HYBRID_KEYWORD_WEIGHT,
+            vector_weight=1.0 - HYBRID_KEYWORD_WEIGHT,
+            top_k=5
+        )
+        if search_results:
+            best_result = search_results[0]
+            knowledge = best_result["content"]
+            logger.info(
+                f"混合检索返回 {len(search_results)} 个结果，"
+                f"最佳来源={best_result.get('source', 'unknown')}，"
+                f"综合分数={best_result.get('score', 0):.3f}"
+            )
             return knowledge
     except Exception as e:
         logger.error(f"快速知识库检索失败: {e}")
