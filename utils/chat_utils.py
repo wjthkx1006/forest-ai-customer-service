@@ -1,19 +1,25 @@
 """
-聊天相关的工具函数
+聊天相关的工具函数 - 混合检索版（向量 + BM25关键词）
 """
 from typing import List, Dict, Any, Optional
-import re
 import jieba
 from rank_bm25 import BM25Okapi
 from .logger import logger
 
-_STOP_WORDS = {
-    "的", "了", "在", "是", "我", "有", "和", "就", "不", "人",
-    "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去",
-    "你", "会", "着", "没有", "看", "好", "自己", "这", "他", "她",
-    "么", "那", "被", "从", "对", "把", "让", "用", "能", "什么",
-    "吗", "呢", "吧", "啊", "呀", "哦", "嗯",
-    "可以", "怎么", "如何", "请问", "想", "问", "一下",
+STOP_WORDS = {
+    "的", "了", "吗", "呢", "吧", "啊", "哦", "嗯", "呀", "哈",
+    "是", "在", "有", "不", "也", "都", "就", "把", "被", "让",
+    "和", "与", "或", "但", "而", "及", "等", "到", "对", "从",
+    "这", "那", "我", "你", "他", "她", "它", "我们", "你们",
+    "什么", "怎么", "怎样", "如何", "多少", "几", "哪个", "哪些",
+    "能", "可以", "会", "要", "想", "看", "说", "做", "去",
+    "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+    "一个", "一些", "一点", "一下", "没有", "还是", "或者",
+    "如果", "因为", "所以", "虽然", "但是", "然后", "已经",
+    "很", "太", "最", "更", "比较", "非常", "特别",
+    "请", "请问", "麻烦", "谢谢", "您好", "你好",
+    "。", "，", "！", "？", "、", "；", "：", """, """,
+    "(", ")", "（", "）", ".", ",", "!", "?", ";", ":",
 }
 
 
@@ -21,110 +27,137 @@ def _tokenize_with_jieba(text: str) -> List[str]:
     """使用 jieba 分词并过滤停用词"""
     if not text:
         return []
-    text_clean = re.sub(r'[^\u4e00-\u9fffa-zA-Z0-9]', ' ', text)
-    words = jieba.lcut(text_clean)
-    return [w.strip().lower() for w in words if len(w.strip()) >= 2 and w.strip().lower() not in _STOP_WORDS]
-
-
-def _min_max_normalize(values: List[float]) -> List[float]:
-    """Min-Max 归一化到 [0, 1]"""
-    if not values:
-        return []
-    min_v = min(values)
-    max_v = max(values)
-    if max_v == min_v:
-        return [1.0] * len(values)
-    return [(v - min_v) / (max_v - min_v) for v in values]
+    tokens = jieba.lcut(text)
+    return [t.strip() for t in tokens if t.strip() and t.strip() not in STOP_WORDS and len(t.strip()) > 0]
 
 
 def _bm25_search(query: str, knowledge_base: List[str], top_k: int = 5) -> List[Dict[str, Any]]:
     """基于 BM25 的关键词检索"""
-    if not query or not knowledge_base:
+    if not knowledge_base:
         return []
 
-    tokenized_corpus = [_tokenize_with_jieba(doc) for doc in knowledge_base]
-    if not any(tokenized_corpus):
-        return []
-
-    bm25 = BM25Okapi(tokenized_corpus)
     query_tokens = _tokenize_with_jieba(query)
     if not query_tokens:
         return []
 
-    scores = bm25.get_scores(query_tokens)
+    corpus_tokens = [_tokenize_with_jieba(doc) for doc in knowledge_base]
 
-    indexed_scores = [(idx, score) for idx, score in enumerate(scores) if score > 0]
+    try:
+        bm25 = BM25Okapi(corpus_tokens)
+        scores = bm25.get_scores(query_tokens)
+    except Exception as e:
+        logger.error(f"BM25检索异常: {e}")
+        return []
+
+    indexed_scores = [(i, float(s)) for i, s in enumerate(scores)]
     indexed_scores.sort(key=lambda x: x[1], reverse=True)
 
     results = []
     for idx, score in indexed_scores[:top_k]:
-        results.append({
-            "index": idx,
-            "score": score,
-            "content": knowledge_base[idx]
-        })
+        if score > 0:
+            results.append({
+                "content": knowledge_base[idx],
+                "score": score,
+                "source": "keyword",
+                "index": idx
+            })
     return results
 
 
-def hybrid_search(query: str, vector_db, knowledge_base: Optional[List[str]] = None,
-                  keyword_weight: float = 0.35, vector_weight: float = 0.65,
-                  top_k: int = 5, similarity_threshold: float = 0.3) -> List[Dict[str, Any]]:
+def _min_max_normalize(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """对检索结果的分数进行 Min-Max 归一化到 [0, 1]"""
+    if not items:
+        return items
+
+    scores = [item["score"] for item in items]
+    min_score = min(scores)
+    max_score = max(scores)
+    score_range = max_score - min_score
+
+    if score_range == 0:
+        for item in items:
+            item["norm_score"] = 1.0
+    else:
+        for item in items:
+            item["norm_score"] = (item["score"] - min_score) / score_range
+
+    return items
+
+
+def hybrid_search(
+    query: str,
+    vector_db,
+    knowledge_base: Optional[List[str]] = None,
+    keyword_weight: float = 0.35,
+    vector_weight: float = 0.65,
+    top_k: int = 5,
+    similarity_threshold: float = 0.3
+) -> List[Dict[str, Any]]:
     """混合检索：向量检索（真实余弦相似度）+ BM25 关键词检索，加权融合排序"""
-    raw_vector: Dict[str, float] = {}
-    raw_keyword: Dict[str, float] = {}
 
-    # 向量检索（带真实分数）
-    if vector_db:
-        try:
-            docs_with_scores = vector_db.similarity_search_with_score(query, k=top_k)
-            for doc, score in docs_with_scores:
-                similarity = 1.0 / (1.0 + score)
-                raw_vector[doc.page_content] = similarity
-            logger.info(f"向量检索返回 {len(raw_vector)} 个结果")
-        except Exception as e:
-            logger.error(f"向量检索失败: {e}")
+    vector_results: List[Dict[str, Any]] = []
+    keyword_results: List[Dict[str, Any]] = []
 
-    # BM25 关键词检索
+    try:
+        docs_with_scores = vector_db.similarity_search_with_score(query, k=top_k)
+        for doc, cosine_dist in docs_with_scores:
+            similarity = 1.0 - cosine_dist
+            vector_results.append({
+                "content": doc.page_content,
+                "score": float(similarity),
+                "source": "vector",
+                "index": -1
+            })
+    except Exception as e:
+        logger.error(f"向量检索异常: {e}")
+
     if knowledge_base:
-        try:
-            bm25_results = _bm25_search(query, knowledge_base, top_k=top_k)
-            for item in bm25_results:
-                raw_keyword[item["content"]] = item["score"]
-            logger.info(f"BM25 关键词检索返回 {len(raw_keyword)} 个结果")
-        except Exception as e:
-            logger.error(f"BM25 关键词检索失败: {e}")
+        keyword_results = _bm25_search(query, knowledge_base, top_k=top_k)
 
-    all_contents = set(raw_vector.keys()) | set(raw_keyword.keys())
-    if not all_contents:
+    if not vector_results and not keyword_results:
         return []
 
-    vector_scores_list = [raw_vector.get(c, 0.0) for c in all_contents]
-    keyword_scores_list = [raw_keyword.get(c, 0.0) for c in all_contents]
+    vector_results = _min_max_normalize(vector_results)
+    keyword_results = _min_max_normalize(keyword_results)
 
-    norm_vector = _min_max_normalize(vector_scores_list)
-    norm_keyword = _min_max_normalize(keyword_scores_list)
+    merged: Dict[str, Dict[str, Any]] = {}
 
-    results = []
-    for i, content in enumerate(all_contents):
-        final_score = norm_vector[i] * vector_weight + norm_keyword[i] * keyword_weight
-        has_v = content in raw_vector
-        has_k = content in raw_keyword
-        results.append({
-            "content": content,
-            "score": final_score,
-            "vector_score": raw_vector.get(content, 0.0),
-            "keyword_score": raw_keyword.get(content, 0.0),
-            "source": "vector+keyword" if (has_v and has_k) else ("vector" if has_v else "keyword")
-        })
+    for item in vector_results:
+        key = item["content"][:100]
+        merged[key] = {
+            "content": item["content"],
+            "vector_score": item.get("norm_score", 0.0),
+            "keyword_score": 0.0,
+            "source": "vector"
+        }
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    for item in keyword_results:
+        key = item["content"][:100]
+        if key in merged:
+            merged[key]["keyword_score"] = item.get("norm_score", 0.0)
+            merged[key]["source"] = "hybrid"
+        else:
+            merged[key] = {
+                "content": item["content"],
+                "vector_score": 0.0,
+                "keyword_score": item.get("norm_score", 0.0),
+                "source": "keyword"
+            }
 
-    filtered = [r for r in results if r["score"] >= similarity_threshold]
-    if not filtered and results:
-        filtered = results[:1]
+    final_results = []
+    for key, data in merged.items():
+        combined_score = data["vector_score"] * vector_weight + data["keyword_score"] * keyword_weight
+        if combined_score >= similarity_threshold:
+            final_results.append({
+                "content": data["content"],
+                "score": combined_score,
+                "source": data["source"],
+                "vector_score": data["vector_score"],
+                "keyword_score": data["keyword_score"]
+            })
 
-    return filtered[:top_k]
-
+    final_results.sort(key=lambda x: x["score"], reverse=True)
+    return final_results[:top_k]
 
 # ---------- 敏感词过滤 ----------
 SENSITIVE_KEYWORDS = [
